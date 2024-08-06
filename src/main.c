@@ -1,4 +1,5 @@
 #include "uart/src/uart.h"
+#include "oled/oled_0_in_96.h"
 #include <gphoto2/gphoto2.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,65 +159,82 @@ int main( int argc, char** argv )
         return 0;
     }
 
-    /* Simple query the camera summary text */
-    ret = gp_camera_get_summary( camera, &text, context );
-    if ( ret < GP_OK )
-    {
-        printf( "Camera failed retrieving summary.\n" );
-        gp_camera_free( camera );
-        return 0;
-    }
-    printf( "Summary:\n%s\n", text.text );
-
     // 打开串口
     int serial_fd = uart_open( 4 );
     uart_init( serial_fd );
     char rx_buffer[256];
+    
+    // oled 初始化
+    if ( DEV_ModuleInit( ) != 0 )
+    {
+        return -1;
+    }
+    printf( "OLED Init...\r\n" );
+    OLED_Init( );
+    OLED_Clear( );
+    
     //  轮询接收消息
     while ( 1 )
     {
+        char shutterspeed_val[16];
+        char iso_val[16];
+        char aperture_val[16];
         // get shutter speed
-        char* shutterspeed_val;
+        char* val;
         float shutterspeed;
-        ret = get_config_value_string( camera, "shutterspeed", &shutterspeed_val, context );
+        ret = get_config_value_string( camera, "shutterspeed", &val, context );
         if ( ret == GP_OK )
         {
-            if ( strchr( shutterspeed_val, '/' ) )
+            if ( strchr( val, '/' ) )
             {
                 int zaehler, nenner;
-                sscanf( shutterspeed_val, "%d/%d", &zaehler, &nenner );
+                sscanf( val, "%d/%d", &zaehler, &nenner );
                 shutterspeed = 1.0 * zaehler / nenner;
             }
             else
             {
-                if ( !sscanf( shutterspeed_val, "%g", &shutterspeed ) )
+                if ( !sscanf( val, "%g", &shutterspeed ) )
                     shutterspeed = 0.0;
             }
             int res_shutterspeed = 1 / shutterspeed;
             printf( "Shutterspeed is 1 / %d (%g) \n", res_shutterspeed, shutterspeed );
+            sprintf( shutterspeed_val, "1 / %d", res_shutterspeed );
         }
 
         // get iso
-        char* iso_val;
-        float iso = 0.0;
-        ret       = get_config_value_string( camera, "iso", &iso_val, context );
+        
+        int iso = 0;
+        ret       = get_config_value_string( camera, "iso", &val, context );
         if ( ret == GP_OK )
         {
-            sscanf( iso_val, "%g", &iso );
-            printf( "ISO is %g\n", iso );
-            free( iso_val );
+            sscanf( val, "%d", &iso );
+            printf( "ISO is %d\n", iso );
+            sprintf( iso_val, "%d", iso );
         }
 
         // get aperture
         float aperture = 0;
-        char* aperture_val;
-        ret = get_config_value_string( camera, "f-number", &aperture_val, context );
+
+        ret = get_config_value_string( camera, "f-number", &val, context );
         if ( ret == GP_OK )
         {
-            sscanf( aperture_val, "f/%g", &aperture );
-            printf( "Aperture is %s (%g)\n", aperture_val, aperture );
-            free( aperture_val );
+            sscanf( val, "f/%g", &aperture );
+            printf( "Aperture is %s (%g)\n", val, aperture );
+            sprintf( aperture_val, "F/%g", aperture );
         }
+
+        // oled 显示
+        OLED_ShowString( 0, 0, "DSLR-PLOG-IN ", 12 );
+        OLED_ShowString( 0, 2, "ISO: ", 16 );
+        OLED_ShowString( 0, 4, "F: ", 16 );
+        OLED_ShowString( 0, 6, "S: ", 16 );
+
+        OLED_ShowString( 50, 2, iso_val, 16 );
+        OLED_ShowString( 50, 4, aperture_val, 16 );
+        OLED_ShowString( 50, 6, shutterspeed_val, 16 );
+        OLED_Clear( );
+
+        // 接受蓝牙消息
         uart_receive( serial_fd, rx_buffer, 256 );
         uart_Delay_ms( 200 );
         // 传 iso
@@ -251,11 +269,6 @@ int main( int argc, char** argv )
             printf( "bluetooth unknown cmd: %s!", rx_buffer );
         }
 
-        // oled 显示
-
-        free( shutterspeed_val );
-        free(iso_val);
-        free( aperture_val );
     }
 
     // 释放资源
