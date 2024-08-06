@@ -38,7 +38,7 @@ target("DSLR_plug-in")
     set_toolchains("luckfox")
 
     -- 源文件
-    add_files("src/*.c", "src/oled/*.c")
+    add_files("src/*.c", "src/uart/src/*.c|main.c")
 
     -- c11 标准
     set_languages("c11", "cxx11")
