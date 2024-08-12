@@ -54,4 +54,6 @@ void OLED_ShowChar(uint8_t x, uint8_t y, uint8_t chr, uint8_t size);
 
 void OLED_ShowString(uint8_t x, uint8_t y, const char *p, uint8_t size);
 
+void OLED_ClearGivenChar( uint8_t Line, uint8_t Column );
+
 #endif

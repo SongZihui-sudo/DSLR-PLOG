@@ -33,6 +33,7 @@ target("DSLR_plug-in")
     add_links(USB_LIBS_1_0_PATH)
     add_links("/home/song/arm_libgphoto2/install_libgphoto2/lib/libgphoto2/2.5.31/ptp2.so")
     add_links("/home/song/arm_libgphoto2/arm_install_libxml2/lib/libxml2.so")
+    add_links("pthread")
 
     -- 设置 SDK
     set_toolchains("luckfox")
@@ -42,6 +43,13 @@ target("DSLR_plug-in")
 
     -- c11 标准
     set_languages("c11", "cxx11")
+
+target_end()
+
+target("luckfox_uart")
+    set_kind("binary")
+    add_files("./src/uart/src/*.c")
+target_end()
 
 xpack("DSLR_PLOG_IN")
     set_formats("zip")

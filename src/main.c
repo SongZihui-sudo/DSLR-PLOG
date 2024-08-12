@@ -1,12 +1,20 @@
-#include "uart/src/uart.h"
 #include "oled/oled_0_in_96.h"
+#include "uart/src/uart.h"
+#include <assert.h>
 #include <gphoto2/gphoto2.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static GPPortInfoList* portinfolist   = NULL;
 static CameraAbilitiesList* abilities = NULL;
+char shutterspeed_val[16]; // 快门速度
+char iso_val[16];          // 感光度
+char aperture_val[16];     // 光圈
+int serial_fd;             // 串口
+Camera* camera;
+GPContext* context;
 
 /*
  * This detects all currently attached cameras and returns
@@ -134,55 +142,97 @@ out:
     return ret;
 }
 
-int main( int argc, char** argv )
+/*
+    蓝牙串口
+*/
+void* repl_booltooth( )
 {
-    Camera* camera;
-    int ret;
-    char* owner;
-    GPContext* context;
-    CameraText text;
-    void* evtdata;
-
-    context = sample_create_context( ); /* see context.c */
-    gp_camera_new( &camera );
-
-    /* This call will autodetect cameras, take the
-     * first one from the list and use it. It will ignore
-     * any others... See the *multi* examples on how to
-     * detect and use more than the first one.
-     */
-    ret = gp_camera_init( camera, context );
-    if ( ret < GP_OK )
-    {
-        printf( "No camera auto detected.\n" );
-        gp_camera_free( camera );
-        return 0;
-    }
-
-    // 打开串口
-    int serial_fd = uart_open( 4 );
-    uart_init( serial_fd );
     char rx_buffer[256];
-    
-    // oled 初始化
-    if ( DEV_ModuleInit( ) != 0 )
-    {
-        return -1;
-    }
-    printf( "OLED Init...\r\n" );
-    OLED_Init( );
-    OLED_Clear( );
-    
-    //  轮询接收消息
+    printf( "Open Bluetooth OK!\n" );
+    int iso_count  = 0;
+    int f_count    = 0;
+    int s_count    = 0;
+    int take_count = 0;
+    int clear_count = 0;
     while ( 1 )
     {
-        char shutterspeed_val[16];
-        char iso_val[16];
-        char aperture_val[16];
+        // 接受蓝牙消息
+        uart_receive( serial_fd, rx_buffer, 256 );
+        // 传 iso
+        if ( ( !strcmp( rx_buffer, "iso" ) || !strcmp( rx_buffer, "ISO" ) ) && !iso_count )
+        {
+            uart_send( serial_fd, iso_val );
+            iso_count++;
+            f_count    = 0;
+            s_count    = 0;
+            take_count = 0;
+            clear_count = 0;
+        }
+        // 传 光圈
+        else if ( ( !strcmp( rx_buffer, "F" ) || !strcmp( rx_buffer, "f" ) ) && !f_count )
+        {
+            uart_send( serial_fd, aperture_val );
+            iso_count = 0;
+            s_count   = 0;
+            f_count++;
+            take_count = 0;
+            clear_count = 0;
+        }
+        // 传 快门速度
+        else if ( ( !strcmp( rx_buffer, "S" ) || !strcmp( rx_buffer, "s" ) ) && !s_count )
+        {
+            uart_send( serial_fd, shutterspeed_val );
+            iso_count = 0;
+            f_count   = 0;
+            s_count++;
+            take_count = 0;
+            clear_count = 0;
+        }
+        // 拍摄
+        else if ( ( !strcmp( rx_buffer, "take" ) ) && !take_count )
+        {
+            printf( "Capturing.\n" );
+            CameraFilePath camera_file_path;
+            int retval = gp_camera_capture( camera, GP_CAPTURE_IMAGE, &camera_file_path, context );
+            if ( retval != GP_OK )
+            {
+                uart_send( serial_fd, "capture failed!" );
+                printf( "  capture failed: %d\n", retval );
+                exit( 1 );
+            }
+            uart_send( serial_fd, "Capturing OK!" );
+            take_count++;
+            f_count   = 0;
+            s_count   = 0;
+            iso_count = 0;
+            clear_count = 0;
+        }
+        // /n
+        else if ((!strcmp(rx_buffer, "###") && !clear_count)) {
+            clear_count ++;
+            take_count = 0;
+            f_count   = 0;
+            s_count   = 0;
+            iso_count = 0;
+        }
+        uart_Delay_ms( 10 );
+    }
+}
+
+// oled 显示信息
+void* r_oled( )
+{
+    while ( 1 )
+    {
+        // oled 显示
+        OLED_ShowString( 0, 0, "DSLR-PLOG-IN ", 12 );
+        OLED_ShowString( 0, 2, "ISO: ", 16 );
+        OLED_ShowString( 0, 4, "F: ", 16 );
+        OLED_ShowString( 0, 6, "S: ", 16 );
         // get shutter speed
         char* val;
         float shutterspeed;
-        ret = get_config_value_string( camera, "shutterspeed", &val, context );
+        int ret = get_config_value_string( camera, "shutterspeed", &val, context );
         if ( ret == GP_OK )
         {
             if ( strchr( val, '/' ) )
@@ -196,82 +246,91 @@ int main( int argc, char** argv )
                 if ( !sscanf( val, "%g", &shutterspeed ) )
                     shutterspeed = 0.0;
             }
-            int res_shutterspeed = 1 / shutterspeed;
-            printf( "Shutterspeed is 1 / %d (%g) \n", res_shutterspeed, shutterspeed );
-            sprintf( shutterspeed_val, "1 / %d", res_shutterspeed );
+            if ( shutterspeed < 1 )
+            {
+                int res_shutterspeed = 1 / shutterspeed;
+                sprintf( shutterspeed_val, "1 / %d", res_shutterspeed );
+            }
+            else
+            {
+                sprintf( shutterspeed_val, "%g", shutterspeed );
+            }
         }
 
         // get iso
-        
         int iso = 0;
-        ret       = get_config_value_string( camera, "iso", &val, context );
+        ret     = get_config_value_string( camera, "iso", &val, context );
         if ( ret == GP_OK )
         {
             sscanf( val, "%d", &iso );
-            printf( "ISO is %d\n", iso );
             sprintf( iso_val, "%d", iso );
         }
 
         // get aperture
         float aperture = 0;
-
-        ret = get_config_value_string( camera, "f-number", &val, context );
+        ret            = get_config_value_string( camera, "f-number", &val, context );
         if ( ret == GP_OK )
         {
             sscanf( val, "f/%g", &aperture );
-            printf( "Aperture is %s (%g)\n", val, aperture );
             sprintf( aperture_val, "F/%g", aperture );
         }
-
-        // oled 显示
-        OLED_ShowString( 0, 0, "DSLR-PLOG-IN ", 12 );
-        OLED_ShowString( 0, 2, "ISO: ", 16 );
-        OLED_ShowString( 0, 4, "F: ", 16 );
-        OLED_ShowString( 0, 6, "S: ", 16 );
 
         OLED_ShowString( 50, 2, iso_val, 16 );
         OLED_ShowString( 50, 4, aperture_val, 16 );
         OLED_ShowString( 50, 6, shutterspeed_val, 16 );
-        OLED_Clear( );
+        DEV_Delay_ms( 10 );
+        OLED_Clear();
+    }
+}
 
-        // 接受蓝牙消息
-        uart_receive( serial_fd, rx_buffer, 256 );
-        uart_Delay_ms( 200 );
-        // 传 iso
-        if ( !strcmp( rx_buffer, "iso" ) || !strcmp( rx_buffer, "ISO" ) )
-        {
-            uart_send(serial_fd, iso_val);
-        }
-        // 传 光圈
-        else if ( !strcmp( rx_buffer, "F" ) || !strcmp( rx_buffer, "f" ) )
-        {
-            uart_send(serial_fd,aperture_val);
-        }
-        // 传 快门速度
-        else if ( !strcmp( rx_buffer, "S" ) || !strcmp( rx_buffer, "s" ) )
-        {
-            uart_send(serial_fd, shutterspeed_val);
-        }
-        // 拍摄
-        else if ( !strcmp( rx_buffer, "take" ) )
-        {
-            printf( "Capturing.\n" );
-            CameraFilePath camera_file_path;
-            int retval = gp_camera_capture( camera, GP_CAPTURE_IMAGE, &camera_file_path, context );
-            if ( retval != GP_OK )
-            {
-                printf( "  capture failed: %d\n", retval );
-                exit( 1 );
-            }
-        }
-        else
-        {
-            printf( "bluetooth unknown cmd: %s!", rx_buffer );
-        }
+int main( int argc, char** argv )
+{
+    int ret;
+    char* owner;
+    CameraText text;
+    void* evtdata;
 
+    context = sample_create_context( ); /* see context.c */
+    gp_camera_new( &camera );
+
+    ret = gp_camera_init( camera, context );
+    if ( ret < GP_OK )
+    {
+        printf( "No camera auto detected.\n" );
+        gp_camera_free( camera );
+        return 0;
+    }
+
+    // 打开串口
+    serial_fd = uart_open( 4 );
+    uart_init( serial_fd );
+
+    // 创建蓝牙轮询子线程
+    pthread_t tid[2];
+    int t_ok = pthread_create( &tid[0], NULL, repl_booltooth, NULL );
+    assert( t_ok );
+
+    // oled 初始化
+    if ( DEV_ModuleInit( ) != 0 )
+    {
+        return -1;
+    }
+    printf( "OLED Init...\r\n" );
+    OLED_Init( );
+    OLED_Clear( );
+
+    //  子线程在 oled 屏幕上显示信息
+    t_ok = pthread_create( &tid[1], NULL, r_oled, NULL );
+    assert( t_ok );
+
+    // 等这两个进程
+    for ( int i = 0; i < 2; i++ )
+    {
+        int ret = pthread_join( tid[i], NULL );
     }
 
     // 释放资源
+    pthread_exit( NULL );
     uart_close( serial_fd );
     gp_camera_exit( camera, context );
     gp_camera_free( camera );
