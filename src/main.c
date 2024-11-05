@@ -7,7 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static GPPortInfoList* portinfolist   = NULL;
+static GPPortInfoList* portinfolist
+= NULL;
 static CameraAbilitiesList* abilities = NULL;
 char shutterspeed_val[16]; // 快门速度
 char iso_val[16];          // 感光度
@@ -149,11 +150,13 @@ void* repl_booltooth( )
 {
     char rx_buffer[256];
     printf( "Open Bluetooth OK!\n" );
-    int iso_count  = 0;
-    int f_count    = 0;
-    int s_count    = 0;
-    int take_count = 0;
+    int iso_count   = 0;
+    int f_count     = 0;
+    int s_count     = 0;
+    int take_count  = 0;
     int clear_count = 0;
+    uart_send(serial_fd, "Open Bluetooth OK!");
+    uart_receive( serial_fd, rx_buffer, 256 );
     while ( 1 )
     {
         // 接受蓝牙消息
@@ -163,9 +166,9 @@ void* repl_booltooth( )
         {
             uart_send( serial_fd, iso_val );
             iso_count++;
-            f_count    = 0;
-            s_count    = 0;
-            take_count = 0;
+            f_count     = 0;
+            s_count     = 0;
+            take_count  = 0;
             clear_count = 0;
         }
         // 传 光圈
@@ -175,7 +178,7 @@ void* repl_booltooth( )
             iso_count = 0;
             s_count   = 0;
             f_count++;
-            take_count = 0;
+            take_count  = 0;
             clear_count = 0;
         }
         // 传 快门速度
@@ -185,7 +188,7 @@ void* repl_booltooth( )
             iso_count = 0;
             f_count   = 0;
             s_count++;
-            take_count = 0;
+            take_count  = 0;
             clear_count = 0;
         }
         // 拍摄
@@ -193,27 +196,27 @@ void* repl_booltooth( )
         {
             printf( "Capturing.\n" );
             CameraFilePath camera_file_path;
-            int retval = gp_camera_capture( camera, GP_CAPTURE_IMAGE, &camera_file_path, context );
+            int retval = gp_camera_trigger_capture( camera, context );
             if ( retval != GP_OK )
             {
                 uart_send( serial_fd, "capture failed!" );
                 printf( "  capture failed: %d\n", retval );
-                exit( 1 );
             }
             uart_send( serial_fd, "Capturing OK!" );
             take_count++;
-            f_count   = 0;
-            s_count   = 0;
-            iso_count = 0;
+            f_count     = 0;
+            s_count     = 0;
+            iso_count   = 0;
             clear_count = 0;
         }
         // /n
-        else if ((!strcmp(rx_buffer, "###") && !clear_count)) {
-            clear_count ++;
+        else if ( ( !strcmp( rx_buffer, "###" ) && !clear_count ) )
+        {
+            clear_count++;
             take_count = 0;
-            f_count   = 0;
-            s_count   = 0;
-            iso_count = 0;
+            f_count    = 0;
+            s_count    = 0;
+            iso_count  = 0;
         }
         uart_Delay_ms( 10 );
     }
@@ -229,6 +232,7 @@ void* r_oled( )
         OLED_ShowString( 0, 2, "ISO: ", 16 );
         OLED_ShowString( 0, 4, "F: ", 16 );
         OLED_ShowString( 0, 6, "S: ", 16 );
+
         // get shutter speed
         char* val;
         float shutterspeed;
@@ -278,8 +282,7 @@ void* r_oled( )
         OLED_ShowString( 50, 2, iso_val, 16 );
         OLED_ShowString( 50, 4, aperture_val, 16 );
         OLED_ShowString( 50, 6, shutterspeed_val, 16 );
-        DEV_Delay_ms( 10 );
-        OLED_Clear();
+        OLED_Clear( );
     }
 }
 
